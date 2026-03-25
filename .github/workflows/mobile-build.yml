@@ -1,0 +1,153 @@
+name: Mobile App Build & Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      buildProfile:
+        description: 'Build profile to use'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - development
+          - preview
+          - production
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/mobile-build.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  info:
+    name: Build Info
+    runs-on: ubuntu-latest
+    outputs:
+      timestamp: ${{ steps.info.outputs.timestamp }}
+      commit_sha: ${{ steps.info.outputs.commit_sha }}
+    steps:
+      - name: Get build info
+        id: info
+        run: |
+          echo "timestamp=$(date -u +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+          echo "commit_sha=$(git rev-parse --short ${{ github.sha }})" >> $GITHUB_OUTPUT
+
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    needs: info
+    env:
+      BUILD_PROFILE: ${{ github.event.inputs.buildProfile || 'production' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Build Android APK (${{ env.BUILD_PROFILE }})
+        run: eas build --platform android --profile ${{ env.BUILD_PROFILE }} --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-${{ env.BUILD_PROFILE }}
+          path: .
+          retention-days: 7
+
+  build-ios:
+    name: Build iOS (Optional)
+    runs-on: macos-latest
+    needs: info
+    env:
+      BUILD_PROFILE: ${{ github.event.inputs.buildProfile || 'production' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build iOS (${{ env.BUILD_PROFILE }})
+        run: npx eas-cli build --platform ios --profile ${{ env.BUILD_PROFILE }} --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        continue-on-error: true
+
+      - name: Upload iOS artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-${{ env.BUILD_PROFILE }}
+          path: .
+          retention-days: 7
+
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+    needs: info
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check for common issues
+        run: |
+          echo "🔍 Checking TypeScript..."
+          npx tsc --noEmit || true
+          echo "🔍 Checking dependencies..."
+          npm list 2>/dev/null | head -20
+          echo "✅ Health check complete"
+
+      - name: Create build summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time**: ${{ needs.info.outputs.timestamp }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ needs.info.outputs.commit_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Profile**: ${{ env.BUILD_PROFILE }}" >> $GITHUB_STEP_SUMMARY

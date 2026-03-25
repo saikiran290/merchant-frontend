@@ -3,33 +3,41 @@ name: Expo EAS Build CI
 on:
   push:
     branches:
-      - main   # change if needed
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
     steps:
-      # 1. Checkout code
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # 2. Setup Node.js
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
+          cache: npm
 
-      # 3. Install dependencies
+      - name: Validate Expo token
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "EXPO_TOKEN is not configured in GitHub Actions secrets."
+            echo "Add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      # 4. Install EAS CLI
-      - name: Install EAS CLI
-        run: npm install -g eas-cli
+      - name: Setup Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
 
-      # 5. Run EAS Build (preview APK)
       - name: Run EAS Build
         run: eas build --profile preview --platform android --non-interactive
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
